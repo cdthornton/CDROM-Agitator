@@ -1,0 +1,305 @@
+
+#include <math.h>
+
+
+#define MAXPWM 255
+#define PLATEMP 100 // deg C
+#define ABSTEMP 110 // deg C
+#define THERMISTORPIN A3
+#define NUMSAMPLES 5
+
+
+#define BRAKEVCC 0
+#define CW   1
+#define CCW  2
+#define BRAKEGND 3
+#define CS_THRESHOLD 100
+
+uint32_t user_command;
+String inputString = "stop";
+int state = 0; // 0 = stopped, 1 = started
+unsigned long start, elapsed, remaining;
+
+//Adjust the max heat time as desired for estimated print time
+unsigned long maxTime = 28800000; // 8 hours
+
+int samples[NUMSAMPLES];
+/*  VNH2SP30 pin definitions
+  xxx[0] controls '1' outputs
+  xxx[1] controls '2' outputs */
+
+ 
+int inApin[2] = {7, 7};  // INA: Clockwise input
+int inBpin[2] = {8, 8}; // INB: Counter-clockwise input
+int pwmpin[2] = {6, 6}; // PWM input
+int cspin[2] = {2, 3}; // CS: Current sense ANALOG input
+int enpin[2] = {0, 1}; // EN: Status of switches output (Analog pin)
+
+int startPin = 6; // turns heat on/off
+int tempPin = 12; // sets temp PLA or ABS
+int ledPin = 13;
+
+int pwm = 255;
+
+float cA, cB;
+float targetTemp, temperature;
+
+//Thermistor temp(THERMISTORPIN); // set up thermister
+
+void setup()
+{
+  targetTemp = PLATEMP;
+  Serial.begin(9600);
+  pinMode(startPin, INPUT_PULLUP);
+  pinMode(tempPin, INPUT_PULLUP);
+  pinMode(ledPin, OUTPUT);
+
+  // Initialize digital pins as outputs
+  for (int i = 0; i < 2; i++)
+  {
+    pinMode(inApin[i], OUTPUT);
+    pinMode(inBpin[i], OUTPUT);
+    pinMode(pwmpin[i], OUTPUT);
+  }
+  // Initialize braked
+  for (int i = 0; i < 2; i++)
+  {
+    digitalWrite(inApin[i], LOW);
+    digitalWrite(inBpin[i], LOW);
+  }
+
+  start = millis();
+  //run_command(1);
+}
+
+void loop()
+{
+  if (digitalRead(startPin) == LOW) {
+    user_command = 1;
+    digitalWrite(ledPin, HIGH);
+    Serial.println("START");
+  } else {
+    user_command = 3; // off
+    digitalWrite(ledPin, LOW);
+  }
+
+  run_command(user_command);
+
+  //  Uncomment if you wish to control via serial monitor:
+  //  if (Serial.available())           // Check for user input
+  //  {
+  //    user_command = Serial.read();      // Read the user command
+  //    Serial.println(user_command);
+  //    run_command(user_command);
+  //  }
+
+}
+
+void run_command(uint16_t cmd)
+{
+  switch (cmd)
+  {
+    case 1:
+      start = millis();
+      heatUp();
+      break;
+    case 2:
+      start = millis();
+      break;
+    case 3:
+      pwm = 0;
+      heatbedOff(0);
+      heatbedOff(1);
+      //      Serial.println("Stopped");
+      break;
+    default:
+      Serial.println("Incorrect Option");
+      break;
+  }
+
+}
+
+void heatUp()
+{
+  uint8_t i;
+  float average;
+  char input = 0;
+  while (digitalRead(startPin) == LOW  )
+  {
+    if (digitalRead(tempPin) == 0)
+    {
+      targetTemp = ABSTEMP;
+    }
+    else
+    {
+      targetTemp =  PLATEMP;
+    }
+
+    elapsed = millis() - start;
+
+    // get smooth temperature readings:
+    // take N samples in a row, with a slight delay
+    for (i = 0; i < NUMSAMPLES; i++) {
+      samples[i] = analogRead(THERMISTORPIN);
+      delay(10);
+    }
+    // average all the samples out
+    average = 0;
+    for (i = 0; i < NUMSAMPLES; i++) {
+      average += samples[i];
+    }
+    average /= NUMSAMPLES;
+    temperature = Thermistor(average);
+
+   
+   //END OF GREATER THAN MAX TIME
+    if (elapsed > maxTime  ) {
+      pwm = 0;
+      heatbedOff(0);
+      heatbedOff(1);
+      Serial.println("Stopped");
+      state = 0;
+    }
+    else
+    {
+      if (state == 0) {
+        state = 1;
+        pwm = MAXPWM;
+      }
+
+      if (temperature > targetTemp  )
+      {
+        pwm = max(pwm - 1, 0);
+      }
+      else
+      {
+        pwm = min(pwm + 1, MAXPWM);
+      }
+
+      heatbedOn(0, CCW, pwm);
+      heatbedOn(1, CCW, pwm);
+
+    }
+    displayResult();
+    delay(100);
+  }
+
+}
+
+
+void heatbedOff(int motor)
+{
+   Serial.println("off");
+  // Initialize off
+  for (int i = 0; i < 2; i++)
+  {
+    digitalWrite(inApin[i], LOW);
+    digitalWrite(inBpin[i], LOW);
+  }
+  analogWrite(pwmpin[motor], 0);
+}
+
+/* heatbedOn() will set a motor going in a specific direction
+  the motor will continue going in that direction, at that speed
+  until told to do otherwise.
+
+  motor: this should be either 0 or 1, will selet which of the two
+  motors to be controlled
+
+  direct: Should be between 0 and 3, with the following result
+  0: Brake to VCC
+  1: Clockwise
+  2: CounterClockwise
+  3: Brake to GND
+
+  pwm: should be a value between ? and 1023, higher the number, the faster
+  it'll go
+*/
+void heatbedOn(uint8_t motor, uint8_t direct, uint8_t pwm)
+{
+  if (motor <= 1)
+  {
+    if (direct <= 4)
+    {
+      // Set inA[motor]
+      if (direct <= 1)
+      {
+        digitalWrite(inApin[motor], HIGH);
+      }
+      else
+      {
+        digitalWrite(inApin[motor], LOW);
+        //Serial.println("d1");
+      }
+
+      // Set inB[motor]
+      if ((direct == 0) || (direct == 2)) {
+        digitalWrite(inBpin[motor], HIGH);
+        //Serial.println("d2");
+      }
+      else
+      {
+        digitalWrite(inBpin[motor], LOW);
+
+      }
+
+      analogWrite(pwmpin[motor], pwm);
+
+
+
+
+    }
+  }
+}
+
+
+
+// http://mathscinotes.com/2011/07/thermistor-mathematics/
+float Thermistor(float aveADC) {
+  float R1 = 9000.;
+  //float Ro = 101000.;
+  float Ro = 90000.;
+  float beta = 3950.;
+  float To = 298.15;
+  float R;
+  float Temp;
+
+  R  = R1 * (1023. / aveADC - 1.);
+  Serial.println(R);
+  Temp = 1 / ((1 / beta) * log(R / Ro) + 1 / To);
+  Temp = Temp - 273.15;            // Convert Kelvin to Celcius
+  //Temp = (Temp * 9.0) / 5.0 + 32.0; // Convert Celcius to Fahrenheit
+  return Temp;
+}
+
+
+// used for debugging output to serial monitor
+void displayResult()  {
+  float h, m, s, ms;
+  unsigned long over;
+  remaining = maxTime - elapsed;
+  h = int(remaining / 3600000);
+  over = remaining % 3600000;
+
+  m = int(over / 60000);
+  over = over % 60000;
+  s = int(over / 1000);
+  //cA = analogRead(cspin[0]);
+  //cB = analogRead(cspin[1]);
+  Serial.print("Temp: ");
+  Serial.print(temperature);
+  Serial.print(" / ");
+  Serial.print(targetTemp);
+  Serial.print("   PWM: ");
+  Serial.print(pwm);
+  Serial.print("  Remaining: ");
+  Serial.print(h, 0);
+  Serial.print(":");
+  Serial.print(m, 0);
+  Serial.print(":");
+  Serial.println(s, 0);
+
+}
+
+
+
