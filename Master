@@ -2,10 +2,9 @@
 #include <math.h>
 
 
-#define MAXPWM 255
-#define PLATEMP 100 // deg C
-#define ABSTEMP 110 // deg C
-#define THERMISTORPIN A3
+#define MAXPWM 200 //MAXPWM <255 or motor driver overheats.
+#define TGTTEMP 40 // deg C
+#define THERMISTORPIN A5
 #define NUMSAMPLES 5
 
 
@@ -27,15 +26,13 @@ int samples[NUMSAMPLES];
 /*  VNH2SP30 pin definitions
   xxx[0] controls '1' outputs
   xxx[1] controls '2' outputs */
-
- 
-int inApin[2] = {7, 7};  // INA: Clockwise input
-int inBpin[2] = {8, 8}; // INB: Counter-clockwise input
-int pwmpin[2] = {6, 6}; // PWM input
+int inApin[2] = {7, 4};  // INA: Clockwise input
+int inBpin[2] = {8, 9}; // INB: Counter-clockwise input
+int pwmpin[2] = {5, 6}; // PWM input
 int cspin[2] = {2, 3}; // CS: Current sense ANALOG input
 int enpin[2] = {0, 1}; // EN: Status of switches output (Analog pin)
 
-int startPin = 6; // turns heat on/off
+int startPin = 11; // turns heat on/off
 int tempPin = 12; // sets temp PLA or ABS
 int ledPin = 13;
 
@@ -48,8 +45,8 @@ float targetTemp, temperature;
 
 void setup()
 {
-  targetTemp = PLATEMP;
-  Serial.begin(9600);
+  targetTemp = TGTTEMP;
+  Serial.begin(115200);
   pinMode(startPin, INPUT_PULLUP);
   pinMode(tempPin, INPUT_PULLUP);
   pinMode(ledPin, OUTPUT);
@@ -74,7 +71,7 @@ void setup()
 
 void loop()
 {
-  if (digitalRead(startPin) == LOW) {
+  if (HIGH == HIGH) {
     user_command = 1;
     digitalWrite(ledPin, HIGH);
     Serial.println("START");
@@ -97,6 +94,7 @@ void loop()
 
 void run_command(uint16_t cmd)
 {
+  Serial.println("run_command()");
   switch (cmd)
   {
     case 1:
@@ -121,19 +119,17 @@ void run_command(uint16_t cmd)
 
 void heatUp()
 {
+  
+  
   uint8_t i;
   float average;
   char input = 0;
-  while (digitalRead(startPin) == LOW  )
+  while (HIGH == HIGH  )
   {
-    if (digitalRead(tempPin) == 0)
-    {
-      targetTemp = ABSTEMP;
-    }
-    else
-    {
-      targetTemp =  PLATEMP;
-    }
+     //Serial.println("heatUp() do while()");
+
+    targetTemp =  TGTTEMP;
+    
 
     elapsed = millis() - start;
 
@@ -141,7 +137,7 @@ void heatUp()
     // take N samples in a row, with a slight delay
     for (i = 0; i < NUMSAMPLES; i++) {
       samples[i] = analogRead(THERMISTORPIN);
-      delay(10);
+      //delay(10);
     }
     // average all the samples out
     average = 0;
@@ -151,8 +147,6 @@ void heatUp()
     average /= NUMSAMPLES;
     temperature = Thermistor(average);
 
-   
-   //END OF GREATER THAN MAX TIME
     if (elapsed > maxTime  ) {
       pwm = 0;
       heatbedOff(0);
@@ -177,11 +171,11 @@ void heatUp()
       }
 
       heatbedOn(0, CCW, pwm);
-      heatbedOn(1, CCW, pwm);
+      //heatbedOn(1, CCW, pwm);
 
     }
     displayResult();
-    delay(100);
+    //delay(100);
   }
 
 }
@@ -189,7 +183,8 @@ void heatUp()
 
 void heatbedOff(int motor)
 {
-   Serial.println("off");
+   Serial.println("heatbedOff()");
+  Serial.println("off");
   // Initialize off
   for (int i = 0; i < 2; i++)
   {
@@ -203,7 +198,7 @@ void heatbedOff(int motor)
   the motor will continue going in that direction, at that speed
   until told to do otherwise.
 
-  motor: this should be either 0 or 1, will selet which of the two
+  motor: this should be either 0 or 1, will select which of the two
   motors to be controlled
 
   direct: Should be between 0 and 3, with the following result
@@ -217,6 +212,7 @@ void heatbedOff(int motor)
 */
 void heatbedOn(uint8_t motor, uint8_t direct, uint8_t pwm)
 {
+  //Serial.println("heatbedOn()");
   if (motor <= 1)
   {
     if (direct <= 4)
@@ -265,7 +261,7 @@ float Thermistor(float aveADC) {
   float Temp;
 
   R  = R1 * (1023. / aveADC - 1.);
-  Serial.println(R);
+  //Serial.println(R);
   Temp = 1 / ((1 / beta) * log(R / Ro) + 1 / To);
   Temp = Temp - 273.15;            // Convert Kelvin to Celcius
   //Temp = (Temp * 9.0) / 5.0 + 32.0; // Convert Celcius to Fahrenheit
@@ -290,6 +286,9 @@ void displayResult()  {
   Serial.print(temperature);
   Serial.print(" / ");
   Serial.print(targetTemp);
+    Serial.print("   STATE: ");
+  Serial.print(state);
+  
   Serial.print("   PWM: ");
   Serial.print(pwm);
   Serial.print("  Remaining: ");
