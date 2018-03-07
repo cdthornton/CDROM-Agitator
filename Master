@@ -14,6 +14,8 @@
 #define BRAKEGND 3
 #define CS_THRESHOLD 100
 
+
+
 uint32_t user_command;
 String inputString = "stop";
 int state = 0; // 0 = HeatOff, 1 = HeatOn, 2 = HeatMaintaining
@@ -23,8 +25,13 @@ int AgDir = 1; //current direction 1 = CW, 2=CCW
 unsigned long AgDirCWTime = 500; // x seconds
 unsigned long AgDirCCWTime = 400; // x seconds
 
+unsigned long IndicateHeatOn, IndicateHeatOnElapsed; //Heating Indicator  Time Tracking Variables
+
+
+
+
 //Adjust the max heat time as desired for estimated print time
-unsigned long maxTime = 30000; // 30s 
+unsigned long maxTime = 43200000; ///43200000;  12hrs 
 
 int samples[NUMSAMPLES];
 /*  VNH2SP30 pin definitions
@@ -36,12 +43,24 @@ int pwmpin[2] = {5, 6}; // PWM input
 int cspin[2] = {2, 3}; // CS: Current sense ANALOG input
 int enpin[2] = {0, 1}; // EN: Status of switches output (Analog pin)
 
-int startPin = 11; // turns agitator on/off
-int tempPin = 12; // sets temp PLA or ABS
-int ledPin = 13;
+int startPin = 3; // turns agitator on/off
+int SpeedPIN = A5; //potentiometer to control agitation speed
+int MotorSpeed;
+
+
+//LED Indicators
+int ledBLUE = 13;  //BLUE
+int ledRED = 12;  //RED
+int LEDHeater = 10;  //Orange
+int ledFOUR = 2;  //Orange
+
+
+bool resetCalled;
+bool timedOut;
 
 int Heater = 0; //motor output for heater
 int Agitator = 1; //motor output for agitator
+
 
 
 int HeatPWM = 255;
@@ -57,8 +76,13 @@ void setup()
   targetTemp = TGTTEMP;
   Serial.begin(115200);
   pinMode(startPin, INPUT_PULLUP);
-  pinMode(tempPin, INPUT_PULLUP);
-  pinMode(ledPin, OUTPUT);
+  //pinMode(SpeedPIN, INPUT);
+  
+  pinMode(ledRED, OUTPUT);
+  pinMode(ledBLUE, OUTPUT);
+  pinMode(LEDHeater, OUTPUT);
+  pinMode(ledFOUR, OUTPUT);
+
 
   // Initialize digital pins as outputs
   for (int i = 0; i < 2; i++)
@@ -80,33 +104,67 @@ void setup()
 
 void loop()
 {
-  if (HIGH == HIGH && (HeatElapsed == 0 || HeatElapsed < maxTime)) { //replace HIGH w/ startpin 
-       HeatStart = millis();
-       Serial.println("START");
-       
-       while (HeatElapsed == 0 || HeatElapsed < maxTime)
-       {
 
+          digitalWrite(ledRED, HIGH);
+
+   
+
+
+          
+          
+  if (digitalRead(startPin) == HIGH && (HeatElapsed == 0 || HeatElapsed < maxTime || resetCalled==true)) 
+  {
+       if(resetCalled == true){
+          resetCalled = false;
+          timedOut = false;
+          HeatElapsed = 0;
+       }
+       
+       HeatStart = millis(); //Set starttime
+       
+       while (digitalRead(startPin) == HIGH && (HeatElapsed == 0 || HeatElapsed < maxTime))
+       {
           heatUp();
-          digitalWrite(ledPin, HIGH);
           runAgitator(1);
        }
     
   } else {
-
+      if (timedOut == false && HeatElapsed > maxTime){
+        timedOut= true;
+      }
+      
       heatbedOff(Heater);
-      digitalWrite(ledPin, LOW);
       runAgitator(0);
-      Serial.println("Time Stop");
+
+      if (digitalRead(startPin) == LOW) 
+      {timedOut = false;
+      digitalWrite(ledBLUE, LOW);
+      }
+      else if (timedOut = true)
+      {
+        Serial.println("Time Stop");
+        IndicateTimeOut(ledBLUE);
+        if(digitalRead(startPin) == LOW) 
+        {
+          resetCalled = true;
+          
+        }
   }
 
 }
+}
+
 
 void runAgitator(int State)
 {
 int sendCmd = 0;
 
-  switch (State)
+          Serial.println(analogRead(4));
+          //Serial.print("MotorSpeed: ");
+          //Serial.println(MotorSpeed);
+
+
+  switch (State)https://www.arduino.cc/
   {
     case 1: 
           AgDirElapsed = millis() - AgDirStart;
@@ -142,13 +200,15 @@ int sendCmd = 0;
       
         if (sendCmd = 1)
         {
+          
+          
           MotorCmd(Agitator,AgDir,AgPWM);
         } 
         
         break;
   case 0:
     //MotorCmd(Agitator,CW,AgPWM);
-    //delay(1000);
+
     MotorCmd(Agitator,0,0);
     break;
     
@@ -180,11 +240,13 @@ void heatUp()
             {                                 //Maintenance Temp
               state = 2;
               HeatPWM = max(HeatPWM - 1, 0);
+              IndicateHeated(LEDHeater);
             }
         
         else
             {                                 //Full On Heat
               HeatPWM = min(HeatPWM + 1, MAXPWM);
+              IndicateHeating(LEDHeater);
             }
     
                                               //Send Command
@@ -199,18 +261,20 @@ void heatUp()
 
 
 
-void heatbedOff(int motor)
-{
-  // Initialize off
-  for (int i = 0; i < 2; i++)
-  {
-    digitalWrite(inApin[i], LOW);
-    digitalWrite(inBpin[i], LOW);
-  }
-  analogWrite(pwmpin[motor], 0);
-
-  state = 0;
-}
+//void heatbedOff(int motor)
+//{
+//  // Initialize off
+// digitalWrite(LEDHeater,LOW);
+//  
+//  for (int i = 0; i < 2; i++)
+//  {
+//    //digitalWrite(inApin[i], LOW);
+//    //digitalWrite(inBpin[i], LOW);
+//  }
+//  //analogWrite(pwmpin[motor], 0);
+// 
+//  state = 0;
+//}
 
 void HeatCmd(uint8_t Heater, uint8_t pwm)
   {
@@ -223,6 +287,84 @@ void HeatCmd(uint8_t Heater, uint8_t pwm)
 
   }
 
+
+void IndicateHeating(int LED)
+{
+   //Flash LED to indicate heating
+    int curState;
+    unsigned long Interval = 250;
+    
+    IndicateHeatOnElapsed = millis() - IndicateHeatOn;
+
+
+  
+    if(digitalRead(LED) == LOW)
+    {
+      curState = LOW;
+    }else
+    {
+      curState = HIGH;
+    }
+    
+    
+    
+    if(IndicateHeatOnElapsed > Interval) 
+    {      
+      if(curState == HIGH)
+      {
+        digitalWrite(LED, LOW);
+        IndicateHeatOn = millis();
+      }else
+      {
+        digitalWrite(LED, HIGH);
+        IndicateHeatOn = millis();
+      }
+    }
+}
+
+
+
+void IndicateHeated(int LED)
+{
+ //Flash LED to indicate heating
+  IndicateHeatOn = millis();
+  digitalWrite(LED, HIGH);
+
+}
+
+void IndicateTimeOut(int LED)
+{
+   //Flash LED to indicate heating
+    int curState;
+    unsigned long Interval = 1000;
+    
+    IndicateHeatOnElapsed = millis() - IndicateHeatOn;
+
+
+  
+    if(digitalRead(LED) == LOW)
+    {
+      curState = LOW;
+    }else
+    {
+      curState = HIGH;
+    }
+    
+    
+    
+    if(IndicateHeatOnElapsed > Interval) 
+    {      
+      if(curState == HIGH)
+      {
+        digitalWrite(LED, LOW);
+        IndicateHeatOn = millis();
+      }else
+      {
+        digitalWrite(LED, HIGH);
+        IndicateHeatOn = millis();
+      }
+    }
+}
 
 void MotorCmd(uint8_t motor, uint8_t direct, uint8_t pwm)
 {
@@ -282,6 +424,7 @@ float GetTemp() {
     // take N samples in a row, with a slight delay
     for (i = 0; i < NUMSAMPLES; i++) {
       samples[i] = analogRead(THERMISTORPIN);
+      Serial.println(samples[i]);
       //delay(10);
     }
     // average all the samples out
@@ -298,7 +441,7 @@ float GetTemp() {
 float Thermistor(float aveADC) {
   float R1 = 9000.;
   //float Ro = 101000.;
-  float Ro = 90000.;
+  float Ro = 90000.;f
   float beta = 3950.;
   float To = 298.15;
   float R;
@@ -315,6 +458,7 @@ float Thermistor(float aveADC) {
 
 // used for debugging output to serial monitor
 void displayResult()  {
+ return;
   float h, m, s, ms;
   unsigned long over;
   HeatRemaining = maxTime - HeatElapsed;
