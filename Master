@@ -3,7 +3,7 @@
 
 
 #define MAXPWM 200 //MAXPWM <255 or motor driver overheats.
-#define TGTTEMP 40 // deg C
+#define TGTTEMP 75 // deg C
 #define THERMISTORPIN A5
 #define NUMSAMPLES 5
 
@@ -261,20 +261,20 @@ void heatUp()
 
 
 
-//void heatbedOff(int motor)
-//{
-//  // Initialize off
-// digitalWrite(LEDHeater,LOW);
-//  
-//  for (int i = 0; i < 2; i++)
-//  {
-//    //digitalWrite(inApin[i], LOW);
-//    //digitalWrite(inBpin[i], LOW);
-//  }
-//  //analogWrite(pwmpin[motor], 0);
-// 
-//  state = 0;
-//}
+void heatbedOff(int motor)
+{
+  // Initialize off
+ digitalWrite(LEDHeater,LOW);
+  
+  for (int i = 0; i < 2; i++)
+  {
+    digitalWrite(inApin[i], LOW);
+    digitalWrite(inBpin[i], LOW);
+  }
+  analogWrite(pwmpin[motor], 0);
+ 
+  state = 0;
+}
 
 void HeatCmd(uint8_t Heater, uint8_t pwm)
   {
@@ -441,7 +441,7 @@ float GetTemp() {
 float Thermistor(float aveADC) {
   float R1 = 9000.;
   //float Ro = 101000.;
-  float Ro = 90000.;f
+  float Ro = 90000.;
   float beta = 3950.;
   float To = 298.15;
   float R;
